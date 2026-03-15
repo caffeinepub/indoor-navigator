@@ -1,0 +1,2180 @@
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { FLOOR_DATA } from "@/data/floorData";
+import type { HighlightedLocation, Marker, MarkerType } from "@/types/map";
+import {
+  ArrowUpDown,
+  BookOpen,
+  Briefcase,
+  DoorOpen,
+  Droplets,
+  FlaskConical,
+  Footprints,
+  Layers,
+  Locate,
+  Navigation,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 4;
+const MAP_WIDTH = 380;
+const MAP_HEIGHT = 340;
+
+const MARKER_CONFIG: Record<
+  MarkerType,
+  {
+    color: string;
+    bg: string;
+    border: string;
+    Icon: React.FC<{ size?: number; className?: string }>;
+  }
+> = {
+  classroom: {
+    color: "text-blue-600",
+    bg: "bg-blue-50",
+    border: "border-blue-300",
+    Icon: BookOpen,
+  },
+  lab: {
+    color: "text-purple-600",
+    bg: "bg-purple-50",
+    border: "border-purple-300",
+    Icon: FlaskConical,
+  },
+  restroom: {
+    color: "text-teal-600",
+    bg: "bg-teal-50",
+    border: "border-teal-300",
+    Icon: Droplets,
+  },
+  office: {
+    color: "text-amber-600",
+    bg: "bg-amber-50",
+    border: "border-amber-300",
+    Icon: Briefcase,
+  },
+  exit: {
+    color: "text-red-600",
+    bg: "bg-red-50",
+    border: "border-red-300",
+    Icon: DoorOpen,
+  },
+  elevator: {
+    color: "text-sky-600",
+    bg: "bg-sky-50",
+    border: "border-sky-300",
+    Icon: ArrowUpDown,
+  },
+  stairs: {
+    color: "text-orange-600",
+    bg: "bg-orange-50",
+    border: "border-orange-300",
+    Icon: Footprints,
+  },
+};
+
+const LEGEND_ITEMS: { type: MarkerType; label: string }[] = [
+  { type: "classroom", label: "Classroom" },
+  { type: "lab", label: "Lab" },
+  { type: "restroom", label: "Restroom" },
+  { type: "office", label: "Office" },
+  { type: "exit", label: "Emergency Exit" },
+  { type: "elevator", label: "Elevator" },
+  { type: "stairs", label: "Stairs" },
+];
+
+function clamp(val: number, min: number, max: number) {
+  return Math.min(Math.max(val, min), max);
+}
+
+// SVG floor plans per floor index
+function GroundFloorSVG() {
+  return (
+    <svg
+      aria-hidden="true"
+      style={{ position: "absolute", inset: 0 }}
+      width={MAP_WIDTH}
+      height={MAP_HEIGHT}
+      viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect
+        x="10"
+        y="10"
+        width="360"
+        height="320"
+        rx="8"
+        fill="white"
+        fillOpacity="0.45"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="2"
+        strokeOpacity="0.3"
+      />
+      <rect
+        x="10"
+        y="95"
+        width="360"
+        height="28"
+        fill="oklch(0.50 0.14 182)"
+        fillOpacity="0.07"
+      />
+      <rect
+        x="10"
+        y="235"
+        width="360"
+        height="22"
+        fill="oklch(0.50 0.14 182)"
+        fillOpacity="0.07"
+      />
+      {/* Room 101 */}
+      <rect
+        x="18"
+        y="18"
+        width="100"
+        height="72"
+        rx="5"
+        fill="oklch(0.94 0.05 240)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.18 240)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="68"
+        y="52"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 240)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        ROOM 101
+      </text>
+      <text
+        x="68"
+        y="64"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.07 240)"
+        fontFamily="sans-serif"
+      >
+        CLASSROOM
+      </text>
+      {/* Room 102 */}
+      <rect
+        x="130"
+        y="18"
+        width="100"
+        height="72"
+        rx="5"
+        fill="oklch(0.94 0.05 240)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.18 240)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="180"
+        y="52"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 240)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        ROOM 102
+      </text>
+      <text
+        x="180"
+        y="64"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.07 240)"
+        fontFamily="sans-serif"
+      >
+        CLASSROOM
+      </text>
+      {/* Computer Lab */}
+      <rect
+        x="242"
+        y="18"
+        width="120"
+        height="72"
+        rx="5"
+        fill="oklch(0.94 0.05 290)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.18 290)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="302"
+        y="52"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 290)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        COMPUTER
+      </text>
+      <text
+        x="302"
+        y="64"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.07 290)"
+        fontFamily="sans-serif"
+      >
+        LAB
+      </text>
+      {/* Science Lab */}
+      <rect
+        x="18"
+        y="130"
+        width="130"
+        height="100"
+        rx="5"
+        fill="oklch(0.94 0.05 290)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.18 290)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="83"
+        y="180"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 290)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        SCIENCE
+      </text>
+      <text
+        x="83"
+        y="192"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.07 290)"
+        fontFamily="sans-serif"
+      >
+        LAB
+      </text>
+      {/* Office */}
+      <rect
+        x="158"
+        y="130"
+        width="100"
+        height="100"
+        rx="5"
+        fill="oklch(0.96 0.06 75)"
+        fillOpacity="0.7"
+        stroke="oklch(0.60 0.16 75)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="208"
+        y="180"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.30 0.10 75)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        MAIN
+      </text>
+      <text
+        x="208"
+        y="192"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.08 75)"
+        fontFamily="sans-serif"
+      >
+        OFFICE
+      </text>
+      {/* Restroom */}
+      <rect
+        x="268"
+        y="130"
+        width="94"
+        height="100"
+        rx="5"
+        fill="oklch(0.94 0.06 182)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="315"
+        y="180"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 182)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        RESTROOM
+      </text>
+      {/* Room 201 */}
+      <rect
+        x="75"
+        y="262"
+        width="180"
+        height="55"
+        rx="5"
+        fill="oklch(0.94 0.05 240)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.18 240)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="165"
+        y="289"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 240)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        ROOM 201
+      </text>
+      <text
+        x="165"
+        y="302"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.07 240)"
+        fontFamily="sans-serif"
+      >
+        CLASSROOM
+      </text>
+      {/* Emergency Exits */}
+      <rect
+        x="10"
+        y="262"
+        width="55"
+        height="55"
+        rx="5"
+        fill="oklch(0.96 0.05 25)"
+        fillOpacity="0.7"
+        stroke="oklch(0.55 0.22 25)"
+        strokeWidth="2"
+        strokeOpacity="0.6"
+        strokeDasharray="5 3"
+      />
+      <text
+        x="37"
+        y="292"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.14 25)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        EXIT A
+      </text>
+      <rect
+        x="265"
+        y="262"
+        width="97"
+        height="55"
+        rx="5"
+        fill="oklch(0.96 0.05 25)"
+        fillOpacity="0.7"
+        stroke="oklch(0.55 0.22 25)"
+        strokeWidth="2"
+        strokeOpacity="0.6"
+        strokeDasharray="5 3"
+      />
+      <text
+        x="313"
+        y="292"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.14 25)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        EXIT B
+      </text>
+      {/* Shared: Elevator */}
+      <rect
+        x="340"
+        y="95"
+        width="30"
+        height="28"
+        rx="3"
+        fill="oklch(0.93 0.06 215)"
+        fillOpacity="0.8"
+        stroke="oklch(0.50 0.14 215)"
+        strokeWidth="1.5"
+        strokeOpacity="0.6"
+      />
+      <text
+        x="355"
+        y="107"
+        textAnchor="middle"
+        fontSize="5.5"
+        fill="oklch(0.28 0.10 215)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        ELEV
+      </text>
+      <text
+        x="355"
+        y="116"
+        textAnchor="middle"
+        fontSize="4.5"
+        fill="oklch(0.40 0.10 215)"
+        fontFamily="sans-serif"
+      >
+        ALL FLOORS
+      </text>
+      {/* Shared: Staircase A */}
+      <rect
+        x="10"
+        y="123"
+        width="38"
+        height="50"
+        rx="3"
+        fill="oklch(0.95 0.06 50)"
+        fillOpacity="0.8"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1.5"
+        strokeOpacity="0.6"
+      />
+      <line
+        x1="14"
+        y1="135"
+        x2="44"
+        y2="135"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="14"
+        y1="143"
+        x2="44"
+        y2="143"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="14"
+        y1="151"
+        x2="44"
+        y2="151"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="14"
+        y1="159"
+        x2="44"
+        y2="159"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="29"
+        y="165"
+        textAnchor="middle"
+        fontSize="5.5"
+        fill="oklch(0.35 0.12 50)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        STAIRS
+      </text>
+      <text
+        x="29"
+        y="172"
+        textAnchor="middle"
+        fontSize="4.5"
+        fill="oklch(0.45 0.10 50)"
+        fontFamily="sans-serif"
+      >
+        ALL FLOORS
+      </text>
+      {/* Shared: Staircase B */}
+      <rect
+        x="340"
+        y="257"
+        width="30"
+        height="60"
+        rx="3"
+        fill="oklch(0.95 0.06 50)"
+        fillOpacity="0.8"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1.5"
+        strokeOpacity="0.6"
+      />
+      <line
+        x1="343"
+        y1="267"
+        x2="367"
+        y2="267"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="343"
+        y1="275"
+        x2="367"
+        y2="275"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="343"
+        y1="283"
+        x2="367"
+        y2="283"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="343"
+        y1="291"
+        x2="367"
+        y2="291"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="355"
+        y="298"
+        textAnchor="middle"
+        fontSize="5.5"
+        fill="oklch(0.35 0.12 50)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        STAIRS
+      </text>
+      <text
+        x="355"
+        y="305"
+        textAnchor="middle"
+        fontSize="4.5"
+        fill="oklch(0.45 0.10 50)"
+        fontFamily="sans-serif"
+      >
+        ALL FLOORS
+      </text>
+      {/* Door notches */}
+      <line
+        x1="68"
+        y1="95"
+        x2="68"
+        y2="123"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+      <line
+        x1="180"
+        y1="95"
+        x2="180"
+        y2="123"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+      <line
+        x1="300"
+        y1="95"
+        x2="300"
+        y2="123"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+      <line
+        x1="83"
+        y1="235"
+        x2="83"
+        y2="255"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+      <line
+        x1="210"
+        y1="235"
+        x2="210"
+        y2="255"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+    </svg>
+  );
+}
+
+function Floor1SVG() {
+  return (
+    <svg
+      aria-hidden="true"
+      style={{ position: "absolute", inset: 0 }}
+      width={MAP_WIDTH}
+      height={MAP_HEIGHT}
+      viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect
+        x="10"
+        y="10"
+        width="360"
+        height="320"
+        rx="8"
+        fill="white"
+        fillOpacity="0.45"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="2"
+        strokeOpacity="0.3"
+      />
+      <rect
+        x="10"
+        y="95"
+        width="360"
+        height="28"
+        fill="oklch(0.50 0.14 182)"
+        fillOpacity="0.07"
+      />
+      <rect
+        x="10"
+        y="235"
+        width="360"
+        height="22"
+        fill="oklch(0.50 0.14 182)"
+        fillOpacity="0.07"
+      />
+      {/* Lecture Hall A — large top-left */}
+      <rect
+        x="18"
+        y="18"
+        width="155"
+        height="72"
+        rx="5"
+        fill="oklch(0.94 0.05 240)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.18 240)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="95"
+        y="52"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 240)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        LECTURE HALL A
+      </text>
+      <text
+        x="95"
+        y="64"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.07 240)"
+        fontFamily="sans-serif"
+      >
+        CLASSROOM
+      </text>
+      {/* Lecture Hall B — large top-right */}
+      <rect
+        x="185"
+        y="18"
+        width="177"
+        height="72"
+        rx="5"
+        fill="oklch(0.94 0.05 240)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.18 240)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="273"
+        y="52"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 240)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        LECTURE HALL B
+      </text>
+      <text
+        x="273"
+        y="64"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.07 240)"
+        fontFamily="sans-serif"
+      >
+        CLASSROOM
+      </text>
+      {/* Staff Room — middle left */}
+      <rect
+        x="18"
+        y="130"
+        width="110"
+        height="100"
+        rx="5"
+        fill="oklch(0.96 0.06 75)"
+        fillOpacity="0.7"
+        stroke="oklch(0.60 0.16 75)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="73"
+        y="180"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.30 0.10 75)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        STAFF
+      </text>
+      <text
+        x="73"
+        y="192"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.08 75)"
+        fontFamily="sans-serif"
+      >
+        ROOM
+      </text>
+      {/* Faculty Office — middle */}
+      <rect
+        x="138"
+        y="130"
+        width="120"
+        height="100"
+        rx="5"
+        fill="oklch(0.96 0.06 75)"
+        fillOpacity="0.7"
+        stroke="oklch(0.60 0.16 75)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="198"
+        y="180"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.30 0.10 75)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        FACULTY
+      </text>
+      <text
+        x="198"
+        y="192"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.08 75)"
+        fontFamily="sans-serif"
+      >
+        OFFICE
+      </text>
+      {/* Restroom */}
+      <rect
+        x="268"
+        y="130"
+        width="94"
+        height="100"
+        rx="5"
+        fill="oklch(0.94 0.06 182)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="315"
+        y="180"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 182)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        RESTROOM
+      </text>
+      {/* Bottom open hallway */}
+      <rect
+        x="75"
+        y="262"
+        width="180"
+        height="55"
+        rx="5"
+        fill="oklch(0.96 0.05 240)"
+        fillOpacity="0.4"
+        stroke="oklch(0.50 0.18 240)"
+        strokeWidth="1"
+        strokeOpacity="0.3"
+        strokeDasharray="4 3"
+      />
+      <text
+        x="165"
+        y="292"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.07 240)"
+        fontFamily="sans-serif"
+      >
+        OPEN HALL
+      </text>
+      {/* Emergency Exits */}
+      <rect
+        x="10"
+        y="262"
+        width="55"
+        height="55"
+        rx="5"
+        fill="oklch(0.96 0.05 25)"
+        fillOpacity="0.7"
+        stroke="oklch(0.55 0.22 25)"
+        strokeWidth="2"
+        strokeOpacity="0.6"
+        strokeDasharray="5 3"
+      />
+      <text
+        x="37"
+        y="292"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.14 25)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        EXIT A
+      </text>
+      <rect
+        x="265"
+        y="262"
+        width="97"
+        height="55"
+        rx="5"
+        fill="oklch(0.96 0.05 25)"
+        fillOpacity="0.7"
+        stroke="oklch(0.55 0.22 25)"
+        strokeWidth="2"
+        strokeOpacity="0.6"
+        strokeDasharray="5 3"
+      />
+      <text
+        x="313"
+        y="292"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.14 25)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        EXIT B
+      </text>
+      {/* Shared: Elevator */}
+      <rect
+        x="340"
+        y="95"
+        width="30"
+        height="28"
+        rx="3"
+        fill="oklch(0.93 0.06 215)"
+        fillOpacity="0.8"
+        stroke="oklch(0.50 0.14 215)"
+        strokeWidth="1.5"
+        strokeOpacity="0.6"
+      />
+      <text
+        x="355"
+        y="107"
+        textAnchor="middle"
+        fontSize="5.5"
+        fill="oklch(0.28 0.10 215)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        ELEV
+      </text>
+      <text
+        x="355"
+        y="116"
+        textAnchor="middle"
+        fontSize="4.5"
+        fill="oklch(0.40 0.10 215)"
+        fontFamily="sans-serif"
+      >
+        ALL FLOORS
+      </text>
+      {/* Shared: Staircase A */}
+      <rect
+        x="10"
+        y="123"
+        width="38"
+        height="50"
+        rx="3"
+        fill="oklch(0.95 0.06 50)"
+        fillOpacity="0.8"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1.5"
+        strokeOpacity="0.6"
+      />
+      <line
+        x1="14"
+        y1="135"
+        x2="44"
+        y2="135"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="14"
+        y1="143"
+        x2="44"
+        y2="143"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="14"
+        y1="151"
+        x2="44"
+        y2="151"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="14"
+        y1="159"
+        x2="44"
+        y2="159"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="29"
+        y="165"
+        textAnchor="middle"
+        fontSize="5.5"
+        fill="oklch(0.35 0.12 50)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        STAIRS
+      </text>
+      <text
+        x="29"
+        y="172"
+        textAnchor="middle"
+        fontSize="4.5"
+        fill="oklch(0.45 0.10 50)"
+        fontFamily="sans-serif"
+      >
+        ALL FLOORS
+      </text>
+      {/* Shared: Staircase B */}
+      <rect
+        x="340"
+        y="257"
+        width="30"
+        height="60"
+        rx="3"
+        fill="oklch(0.95 0.06 50)"
+        fillOpacity="0.8"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1.5"
+        strokeOpacity="0.6"
+      />
+      <line
+        x1="343"
+        y1="267"
+        x2="367"
+        y2="267"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="343"
+        y1="275"
+        x2="367"
+        y2="275"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="343"
+        y1="283"
+        x2="367"
+        y2="283"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="343"
+        y1="291"
+        x2="367"
+        y2="291"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="355"
+        y="298"
+        textAnchor="middle"
+        fontSize="5.5"
+        fill="oklch(0.35 0.12 50)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        STAIRS
+      </text>
+      <text
+        x="355"
+        y="305"
+        textAnchor="middle"
+        fontSize="4.5"
+        fill="oklch(0.45 0.10 50)"
+        fontFamily="sans-serif"
+      >
+        ALL FLOORS
+      </text>
+      {/* Door notches */}
+      <line
+        x1="95"
+        y1="95"
+        x2="95"
+        y2="123"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+      <line
+        x1="273"
+        y1="95"
+        x2="273"
+        y2="123"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+      <line
+        x1="198"
+        y1="235"
+        x2="198"
+        y2="255"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+    </svg>
+  );
+}
+
+function Floor2SVG() {
+  return (
+    <svg
+      aria-hidden="true"
+      style={{ position: "absolute", inset: 0 }}
+      width={MAP_WIDTH}
+      height={MAP_HEIGHT}
+      viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect
+        x="10"
+        y="10"
+        width="360"
+        height="320"
+        rx="8"
+        fill="white"
+        fillOpacity="0.45"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="2"
+        strokeOpacity="0.3"
+      />
+      <rect
+        x="10"
+        y="95"
+        width="360"
+        height="28"
+        fill="oklch(0.50 0.14 182)"
+        fillOpacity="0.07"
+      />
+      <rect
+        x="10"
+        y="235"
+        width="360"
+        height="22"
+        fill="oklch(0.50 0.14 182)"
+        fillOpacity="0.07"
+      />
+      {/* Library — large central top */}
+      <rect
+        x="18"
+        y="18"
+        width="210"
+        height="72"
+        rx="5"
+        fill="oklch(0.94 0.05 290)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.18 290)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="123"
+        y="52"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 290)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        LIBRARY
+      </text>
+      <text
+        x="123"
+        y="64"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.07 290)"
+        fontFamily="sans-serif"
+      >
+        READING ROOM
+      </text>
+      {/* IT Lab */}
+      <rect
+        x="242"
+        y="18"
+        width="120"
+        height="72"
+        rx="5"
+        fill="oklch(0.94 0.05 290)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.18 290)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="302"
+        y="52"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 290)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        IT LAB
+      </text>
+      <text
+        x="302"
+        y="64"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.07 290)"
+        fontFamily="sans-serif"
+      >
+        COMPUTER
+      </text>
+      {/* Conference Room A */}
+      <rect
+        x="18"
+        y="130"
+        width="110"
+        height="100"
+        rx="5"
+        fill="oklch(0.96 0.06 75)"
+        fillOpacity="0.7"
+        stroke="oklch(0.60 0.16 75)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="73"
+        y="177"
+        textAnchor="middle"
+        fontSize="7.5"
+        fill="oklch(0.30 0.10 75)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        CONFERENCE
+      </text>
+      <text
+        x="73"
+        y="188"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.08 75)"
+        fontFamily="sans-serif"
+      >
+        ROOM A
+      </text>
+      {/* Conference Room B */}
+      <rect
+        x="138"
+        y="130"
+        width="120"
+        height="100"
+        rx="5"
+        fill="oklch(0.96 0.06 75)"
+        fillOpacity="0.7"
+        stroke="oklch(0.60 0.16 75)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="198"
+        y="177"
+        textAnchor="middle"
+        fontSize="7.5"
+        fill="oklch(0.30 0.10 75)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        CONFERENCE
+      </text>
+      <text
+        x="198"
+        y="188"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.08 75)"
+        fontFamily="sans-serif"
+      >
+        ROOM B
+      </text>
+      {/* Restroom */}
+      <rect
+        x="268"
+        y="130"
+        width="94"
+        height="100"
+        rx="5"
+        fill="oklch(0.94 0.06 182)"
+        fillOpacity="0.7"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="315"
+        y="180"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.28 0.10 182)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        RESTROOM
+      </text>
+      {/* Print Room */}
+      <rect
+        x="75"
+        y="262"
+        width="180"
+        height="55"
+        rx="5"
+        fill="oklch(0.96 0.06 75)"
+        fillOpacity="0.7"
+        stroke="oklch(0.60 0.16 75)"
+        strokeWidth="1.5"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="165"
+        y="289"
+        textAnchor="middle"
+        fontSize="8"
+        fill="oklch(0.30 0.10 75)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        PRINT ROOM
+      </text>
+      <text
+        x="165"
+        y="302"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.08 75)"
+        fontFamily="sans-serif"
+      >
+        OFFICE
+      </text>
+      {/* Emergency Exits */}
+      <rect
+        x="10"
+        y="262"
+        width="55"
+        height="55"
+        rx="5"
+        fill="oklch(0.96 0.05 25)"
+        fillOpacity="0.7"
+        stroke="oklch(0.55 0.22 25)"
+        strokeWidth="2"
+        strokeOpacity="0.6"
+        strokeDasharray="5 3"
+      />
+      <text
+        x="37"
+        y="292"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.14 25)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        EXIT A
+      </text>
+      <rect
+        x="265"
+        y="262"
+        width="97"
+        height="55"
+        rx="5"
+        fill="oklch(0.96 0.05 25)"
+        fillOpacity="0.7"
+        stroke="oklch(0.55 0.22 25)"
+        strokeWidth="2"
+        strokeOpacity="0.6"
+        strokeDasharray="5 3"
+      />
+      <text
+        x="313"
+        y="292"
+        textAnchor="middle"
+        fontSize="7"
+        fill="oklch(0.40 0.14 25)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        EXIT B
+      </text>
+      {/* Shared: Elevator */}
+      <rect
+        x="340"
+        y="95"
+        width="30"
+        height="28"
+        rx="3"
+        fill="oklch(0.93 0.06 215)"
+        fillOpacity="0.8"
+        stroke="oklch(0.50 0.14 215)"
+        strokeWidth="1.5"
+        strokeOpacity="0.6"
+      />
+      <text
+        x="355"
+        y="107"
+        textAnchor="middle"
+        fontSize="5.5"
+        fill="oklch(0.28 0.10 215)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        ELEV
+      </text>
+      <text
+        x="355"
+        y="116"
+        textAnchor="middle"
+        fontSize="4.5"
+        fill="oklch(0.40 0.10 215)"
+        fontFamily="sans-serif"
+      >
+        ALL FLOORS
+      </text>
+      {/* Shared: Staircase A */}
+      <rect
+        x="10"
+        y="123"
+        width="38"
+        height="50"
+        rx="3"
+        fill="oklch(0.95 0.06 50)"
+        fillOpacity="0.8"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1.5"
+        strokeOpacity="0.6"
+      />
+      <line
+        x1="14"
+        y1="135"
+        x2="44"
+        y2="135"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="14"
+        y1="143"
+        x2="44"
+        y2="143"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="14"
+        y1="151"
+        x2="44"
+        y2="151"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="14"
+        y1="159"
+        x2="44"
+        y2="159"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="29"
+        y="165"
+        textAnchor="middle"
+        fontSize="5.5"
+        fill="oklch(0.35 0.12 50)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        STAIRS
+      </text>
+      <text
+        x="29"
+        y="172"
+        textAnchor="middle"
+        fontSize="4.5"
+        fill="oklch(0.45 0.10 50)"
+        fontFamily="sans-serif"
+      >
+        ALL FLOORS
+      </text>
+      {/* Shared: Staircase B */}
+      <rect
+        x="340"
+        y="257"
+        width="30"
+        height="60"
+        rx="3"
+        fill="oklch(0.95 0.06 50)"
+        fillOpacity="0.8"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1.5"
+        strokeOpacity="0.6"
+      />
+      <line
+        x1="343"
+        y1="267"
+        x2="367"
+        y2="267"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="343"
+        y1="275"
+        x2="367"
+        y2="275"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="343"
+        y1="283"
+        x2="367"
+        y2="283"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <line
+        x1="343"
+        y1="291"
+        x2="367"
+        y2="291"
+        stroke="oklch(0.60 0.16 50)"
+        strokeWidth="1"
+        strokeOpacity="0.5"
+      />
+      <text
+        x="355"
+        y="298"
+        textAnchor="middle"
+        fontSize="5.5"
+        fill="oklch(0.35 0.12 50)"
+        fontFamily="sans-serif"
+        fontWeight="700"
+      >
+        STAIRS
+      </text>
+      <text
+        x="355"
+        y="305"
+        textAnchor="middle"
+        fontSize="4.5"
+        fill="oklch(0.45 0.10 50)"
+        fontFamily="sans-serif"
+      >
+        ALL FLOORS
+      </text>
+      {/* Door notches */}
+      <line
+        x1="123"
+        y1="95"
+        x2="123"
+        y2="123"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+      <line
+        x1="302"
+        y1="95"
+        x2="302"
+        y2="123"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+      <line
+        x1="165"
+        y1="235"
+        x2="165"
+        y2="255"
+        stroke="oklch(0.50 0.14 182)"
+        strokeWidth="1.5"
+        strokeOpacity="0.25"
+      />
+    </svg>
+  );
+}
+
+const FLOOR_SVG = [GroundFloorSVG, Floor1SVG, Floor2SVG];
+
+interface MapScreenProps {
+  highlightedLocation?: HighlightedLocation | null;
+  onClearHighlight?: () => void;
+}
+
+export default function MapScreen({
+  highlightedLocation = null,
+  onClearHighlight,
+}: MapScreenProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
+
+  const [scale, setScale] = useState(1);
+  const [tx, setTx] = useState(0);
+  const [ty, setTy] = useState(0);
+  const [activeMarker, setActiveMarker] = useState<number | null>(null);
+  const [activeFloor, setActiveFloor] = useState(0);
+  const [navigationActive, setNavigationActive] = useState(false);
+
+  // Pan to highlighted location when it changes
+  useEffect(() => {
+    if (!highlightedLocation) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const containerW = rect.width || 340;
+    const containerH = rect.height || 340;
+    const targetScale = 1.8;
+    const targetTx = containerW / 2 - highlightedLocation.x * targetScale;
+    const targetTy = containerH / 2 - highlightedLocation.y * targetScale;
+    setActiveFloor(highlightedLocation.floorId);
+    setScale(targetScale);
+    setTx(targetTx);
+    setTy(targetTy);
+    setActiveMarker(highlightedLocation.markerId);
+    setNavigationActive(false);
+  }, [highlightedLocation]);
+
+  const YOU_ARE_HERE = { x: 30, y: 290 };
+
+  const routeInfo = (() => {
+    if (!navigationActive || !highlightedLocation) return null;
+    const dx = Math.abs(highlightedLocation.x - YOU_ARE_HERE.x);
+    const dy = Math.abs(highlightedLocation.y - YOU_ARE_HERE.y);
+    const pixelDist = dx + dy;
+    const meters = Math.round(pixelDist * 0.9);
+    const minutes = Math.max(1, Math.round(meters / 80));
+    return { meters, minutes };
+  })();
+
+  // Pointer drag state
+  const dragging = useRef(false);
+  const lastPos = useRef({ x: 0, y: 0 });
+
+  // Touch pinch state
+  const lastPinchDist = useRef<number | null>(null);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+    dragging.current = true;
+    lastPos.current = { x: e.clientX, y: e.clientY };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setActiveMarker(null);
+  }, []);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    const dx = e.clientX - lastPos.current.x;
+    const dy = e.clientY - lastPos.current.y;
+    lastPos.current = { x: e.clientX, y: e.clientY };
+    setTx((prev) => prev + dx);
+    setTy((prev) => prev + dy);
+  }, []);
+
+  const handlePointerUp = useCallback(() => {
+    dragging.current = false;
+  }, []);
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    setScale((prev) => {
+      const next = clamp(prev * delta, MIN_SCALE, MAX_SCALE);
+      const ratio = next / prev;
+      setTx((px) => mouseX - ratio * (mouseX - px));
+      setTy((py) => mouseY - ratio * (mouseY - py));
+      return next;
+    });
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (lastPinchDist.current !== null) {
+        const ratio = dist / lastPinchDist.current;
+        setScale((prev) => clamp(prev * ratio, MIN_SCALE, MAX_SCALE));
+      }
+      lastPinchDist.current = dist;
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    lastPinchDist.current = null;
+  }, []);
+
+  const zoomAt = useCallback((factor: number) => {
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    setScale((prev) => {
+      const next = clamp(prev * factor, MIN_SCALE, MAX_SCALE);
+      const ratio = next / prev;
+      setTx((px) => cx - ratio * (cx - px));
+      setTy((py) => cy - ratio * (cy - py));
+      return next;
+    });
+  }, []);
+
+  const handleFloorChange = useCallback((floorId: number) => {
+    setActiveFloor(floorId);
+    setActiveMarker(null);
+  }, []);
+
+  const currentFloor = FLOOR_DATA[activeFloor];
+  const FloorSVG = FLOOR_SVG[activeFloor];
+
+  // Compute tooltip screen position for the active marker
+  const getTooltipStyle = (marker: Marker): React.CSSProperties => {
+    const container = containerRef.current;
+    if (!container) return { display: "none" };
+    const rect = container.getBoundingClientRect();
+    const screenX = rect.left + tx + marker.x * scale;
+    const screenY = rect.top + ty + marker.y * scale - 14 * scale;
+    return {
+      position: "fixed",
+      left: screenX,
+      top: screenY,
+      transform: "translate(-50%, -100%) translateY(-6px)",
+      pointerEvents: "none",
+      zIndex: 9999,
+    };
+  };
+
+  const activeMarkerData =
+    activeMarker !== null
+      ? currentFloor.markers.find((m) => m.id === activeMarker)
+      : null;
+  const activeCfg = activeMarkerData
+    ? MARKER_CONFIG[activeMarkerData.type]
+    : null;
+
+  return (
+    <section data-ocid="map.section" className="animate-fade-in">
+      {/* Header */}
+      <div className="px-5 pt-12 pb-4">
+        <p className="text-xs font-semibold tracking-widest uppercase text-primary mb-1">
+          Navigation
+        </p>
+        <h1 className="font-display text-2xl font-bold text-foreground">
+          Floor Map
+        </h1>
+        <p className="text-sm text-muted-foreground font-body mt-0.5">
+          Campus Building · {currentFloor.label}
+        </p>
+      </div>
+
+      {/* Highlight Banner */}
+      {highlightedLocation && (
+        <div
+          data-ocid="map.highlight_banner"
+          className="mx-5 mb-3 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-2.5"
+        >
+          <span className="text-lg">📍</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold text-amber-800 font-body">
+              Showing location
+            </p>
+            <p className="text-xs text-amber-700 font-body truncate">
+              {highlightedLocation.label}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-ocid="map.start_navigation.button"
+            disabled={navigationActive}
+            onClick={() => setNavigationActive(true)}
+            className="flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-bold rounded-xl py-1.5 px-2.5 hover:bg-primary/90 transition-colors disabled:opacity-60 flex-shrink-0"
+          >
+            <Navigation size={11} />
+            {navigationActive ? "Navigating..." : "Start"}
+          </button>
+          <button
+            type="button"
+            data-ocid="map.highlight_clear_button"
+            onClick={() => {
+              setNavigationActive(false);
+              onClearHighlight?.();
+            }}
+            aria-label="Clear highlight"
+            className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0 hover:bg-amber-200 transition-colors"
+          >
+            <X size={12} className="text-amber-700" />
+          </button>
+        </div>
+      )}
+
+      {/* Map Area */}
+      <div className="px-5 mb-4">
+        <div className="relative">
+          <div
+            ref={containerRef}
+            data-ocid="map.canvas_target"
+            className="map-grid relative rounded-3xl overflow-hidden cursor-grab active:cursor-grabbing select-none"
+            style={{ height: "340px", touchAction: "none" }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerLeave={handlePointerUp}
+            onWheel={handleWheel}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
+            {/* Transformable map layer with floor transition */}
+            <div
+              ref={mapRef}
+              style={{
+                position: "absolute",
+                transformOrigin: "0 0",
+                transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+                width: MAP_WIDTH,
+                height: MAP_HEIGHT,
+                willChange: "transform",
+              }}
+            >
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={activeFloor}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.22, ease: "easeInOut" }}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: MAP_WIDTH,
+                    height: MAP_HEIGHT,
+                  }}
+                >
+                  {/* SVG Floor Plan */}
+                  <FloorSVG />
+
+                  {/* Markers */}
+                  {currentFloor.markers.map((marker) => {
+                    const cfg = MARKER_CONFIG[marker.type];
+                    const { Icon } = cfg;
+                    const isActive = activeMarker === marker.id;
+                    const isHighlighted =
+                      highlightedLocation !== null &&
+                      highlightedLocation.floorId === activeFloor &&
+                      highlightedLocation.markerId === marker.id;
+                    return (
+                      <div
+                        key={marker.id}
+                        style={{
+                          position: "absolute",
+                          left: marker.x,
+                          top: marker.y,
+                          transform: "translate(-50%, -50%)",
+                          zIndex: isActive ? 20 : 10,
+                        }}
+                      >
+                        {/* Pulsing highlight ring */}
+                        {isHighlighted && (
+                          <span
+                            className="absolute inset-0 rounded-full animate-ping"
+                            style={{
+                              width: "36px",
+                              height: "36px",
+                              top: "-4px",
+                              left: "-4px",
+                              backgroundColor: "oklch(0.75 0.18 60)",
+                              opacity: 0.6,
+                            }}
+                          />
+                        )}
+                        <motion.button
+                          type="button"
+                          data-ocid={`map.marker.${marker.id}`}
+                          aria-label={marker.label}
+                          whileHover={{ scale: 1.15 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveMarker(isActive ? null : marker.id);
+                          }}
+                          className={`w-7 h-7 rounded-full border-2 shadow-lg flex items-center justify-center cursor-pointer ${cfg.bg} ${isHighlighted ? "border-amber-400 ring-2 ring-amber-300 ring-offset-1" : cfg.border}`}
+                          style={{ pointerEvents: "all" }}
+                        >
+                          <Icon size={13} className={cfg.color} />
+                        </motion.button>
+                      </div>
+                    );
+                  })}
+                  {/* Route overlay */}
+                  {navigationActive &&
+                    highlightedLocation &&
+                    highlightedLocation.floorId === activeFloor && (
+                      <svg
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          pointerEvents: "none",
+                          overflow: "visible",
+                        }}
+                        width={MAP_WIDTH}
+                        height={MAP_HEIGHT}
+                        viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
+                        aria-label="Route overlay"
+                      >
+                        <title>Route overlay</title>
+                        <polyline
+                          points={`30,290 ${highlightedLocation.x},290 ${highlightedLocation.x},${highlightedLocation.y}`}
+                          fill="none"
+                          stroke="oklch(0.55 0.20 142)"
+                          strokeWidth="3"
+                          strokeDasharray="8 5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          opacity="0.85"
+                        />
+                        <circle
+                          cx={30}
+                          cy={290}
+                          r={7}
+                          fill="oklch(0.55 0.20 142)"
+                          opacity={0.25}
+                        />
+                        <circle
+                          cx={30}
+                          cy={290}
+                          r={4}
+                          fill="oklch(0.45 0.22 142)"
+                        />
+                        <circle cx={30} cy={290} r={2} fill="white" />
+                        <text
+                          x={40}
+                          y={294}
+                          fontSize={8}
+                          fill="oklch(0.35 0.18 142)"
+                          fontWeight={700}
+                          fontFamily="sans-serif"
+                        >
+                          YOU
+                        </text>
+                      </svg>
+                    )}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+
+            {/* Zoom controls */}
+            <div className="absolute top-3 left-3 flex flex-col gap-1.5 z-20">
+              <button
+                type="button"
+                data-ocid="map.zoom_in.button"
+                aria-label="Zoom in"
+                onClick={() => zoomAt(1.25)}
+                className="w-9 h-9 bg-white rounded-xl shadow-card flex items-center justify-center hover:bg-secondary transition-colors"
+              >
+                <ZoomIn size={16} className="text-foreground" />
+              </button>
+              <button
+                type="button"
+                data-ocid="map.zoom_out.button"
+                aria-label="Zoom out"
+                onClick={() => zoomAt(0.8)}
+                className="w-9 h-9 bg-white rounded-xl shadow-card flex items-center justify-center hover:bg-secondary transition-colors"
+              >
+                <ZoomOut size={16} className="text-foreground" />
+              </button>
+            </div>
+
+            {/* Floor selector — top right */}
+            <div
+              data-ocid="map.floor_selector.tab"
+              className="absolute top-3 right-3 flex flex-col gap-1 z-20"
+            >
+              {FLOOR_DATA.map((floor, idx) => (
+                <button
+                  key={floor.id}
+                  type="button"
+                  data-ocid={`map.floor.button.${idx + 1}`}
+                  aria-label={`Switch to ${floor.label}`}
+                  onClick={() => handleFloorChange(floor.id)}
+                  className={`w-9 h-9 rounded-xl text-xs font-bold shadow-card transition-all duration-200 flex items-center justify-center ${
+                    activeFloor === floor.id
+                      ? "bg-primary text-primary-foreground scale-105"
+                      : "bg-white text-foreground hover:bg-secondary"
+                  }`}
+                >
+                  {floor.abbr}
+                </button>
+              ))}
+              {/* Locate / Reset view button */}
+              <button
+                type="button"
+                data-ocid="map.location.button"
+                onClick={() => {
+                  setScale(1);
+                  setTx(0);
+                  setTy(0);
+                }}
+                className="w-9 h-9 bg-white rounded-xl shadow-card flex items-center justify-center hover:bg-secondary transition-colors mt-1"
+                aria-label="Reset view"
+              >
+                <Locate size={16} className="text-primary" />
+              </button>
+            </div>
+
+            {/* Scale indicator */}
+            <div className="absolute bottom-3 left-3 bg-white/80 backdrop-blur-sm px-2 py-0.5 rounded-lg text-[10px] font-mono font-semibold text-muted-foreground z-20">
+              {Math.round(scale * 100)}%
+            </div>
+
+            {/* Layers */}
+            <button
+              type="button"
+              aria-label="Toggle layers"
+              className="absolute bottom-3 right-3 w-10 h-10 bg-white rounded-2xl shadow-card flex items-center justify-center hover:bg-secondary transition-colors z-20"
+            >
+              <Layers size={18} className="text-foreground" />
+            </button>
+          </div>
+
+          {/* Tooltip overlay — sits above the overflow-hidden map container */}
+          <AnimatePresence>
+            {activeMarkerData && activeCfg && (
+              <motion.div
+                key={`${activeFloor}-${activeMarkerData.id}`}
+                initial={{ opacity: 0, y: 4, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 4, scale: 0.9 }}
+                transition={{ duration: 0.15 }}
+                style={getTooltipStyle(activeMarkerData)}
+              >
+                <div
+                  className={`rounded-2xl border shadow-xl overflow-hidden ${activeCfg.bg} ${activeCfg.border}`}
+                  style={{ minWidth: "140px", pointerEvents: "all" }}
+                >
+                  <div
+                    className={`text-[10px] font-bold px-3 py-2 whitespace-nowrap ${activeCfg.color}`}
+                  >
+                    {activeMarkerData.label}
+                  </div>
+                  {highlightedLocation &&
+                    highlightedLocation.floorId === activeFloor &&
+                    highlightedLocation.markerId === activeMarkerData.id && (
+                      <div className="px-2 pb-2">
+                        <button
+                          type="button"
+                          data-ocid="map.navigate_button"
+                          onClick={() => {
+                            setNavigationActive(true);
+                            toast.success(
+                              `Navigation to ${activeMarkerData.label} started`,
+                            );
+                          }}
+                          className="w-full flex items-center justify-center gap-1.5 bg-primary text-primary-foreground text-[10px] font-bold rounded-xl py-1.5 px-2 hover:bg-primary/90 transition-colors"
+                        >
+                          <Navigation size={10} />
+                          Navigate Here
+                        </button>
+                      </div>
+                    )}
+                </div>
+                <div
+                  className={`w-2 h-2 mx-auto -mt-1 rotate-45 border-b border-r ${activeCfg.border} ${activeCfg.bg}`}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+
+      {/* Navigation Info Panel */}
+      <AnimatePresence>
+        {routeInfo && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 12 }}
+            transition={{ duration: 0.2 }}
+            className="mx-5 mb-4"
+            data-ocid="map.navigation_info.panel"
+          >
+            <div className="bg-primary text-primary-foreground rounded-2xl px-4 py-3 flex items-center gap-3 shadow-lg">
+              <Navigation size={20} className="flex-shrink-0 opacity-90" />
+              <div className="flex-1">
+                <p className="text-xs font-bold leading-tight">
+                  Route to {highlightedLocation?.label}
+                </p>
+                <div className="flex items-center gap-3 mt-1">
+                  <span className="text-sm font-bold">
+                    {routeInfo.meters} m
+                  </span>
+                  <span className="text-xs opacity-75">·</span>
+                  <span className="text-sm font-bold">
+                    ~{routeInfo.minutes} min walk
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                data-ocid="map.stop_navigation.button"
+                onClick={() => setNavigationActive(false)}
+                className="w-8 h-8 rounded-full bg-primary-foreground/20 flex items-center justify-center hover:bg-primary-foreground/30 transition-colors"
+                aria-label="Stop navigation"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Hint */}
+      <div className="px-5 mb-3">
+        <p className="text-[11px] text-muted-foreground font-body text-center">
+          Drag to pan · Scroll or pinch to zoom · Tap markers for details
+        </p>
+      </div>
+
+      {/* Legend */}
+      <div className="px-5 mb-6">
+        <Card className="border-0 shadow-card">
+          <CardContent className="px-4 py-3">
+            <div className="flex items-center gap-2 mb-3">
+              <Layers size={13} className="text-muted-foreground" />
+              <span className="text-xs font-bold font-body text-foreground">
+                Map Legend
+              </span>
+              <Badge className="ml-auto text-[10px] bg-secondary text-secondary-foreground border-0">
+                {currentFloor.label}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {LEGEND_ITEMS.map(({ type, label }) => {
+                const cfg = MARKER_CONFIG[type];
+                const { Icon } = cfg;
+                return (
+                  <div key={type} className="flex items-center gap-1.5">
+                    <div
+                      className={`w-6 h-6 rounded-full border flex items-center justify-center flex-shrink-0 ${cfg.bg} ${cfg.border}`}
+                    >
+                      <Icon size={11} className={cfg.color} />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground font-body leading-tight">
+                      {label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </section>
+  );
+}
